@@ -3,16 +3,24 @@ from kivy.utils import platform
 from kivy.uix.button import Button
 from kivy.logger import Logger
 from kivy.lang import Builder
-from threading import Thread
-
+from threading import Thread, Event
+from kivy.clock import Clock
+import zmq
 
 kv = """
 BoxLayout:
     orientation: "vertical"
-    ToggleButton:
-        text: "Service 1"
-        on_state: app.toggle_service1(self.state == "down")
-        state: "down" if app.is_service1_running() else "normal"
+    BoxLayout:
+        ToggleButton:
+            text: "Service 1"
+            on_state: app.toggle_service1(self.state == "down")
+            state: "down" if app.is_service1_running() else "normal"
+        Button:
+            text: "Compute"
+            on_release: app.s1.socket.send_multipart(["COMPUTE", "6684", "6513"])
+        Button:
+            text: "Echo"
+            on_release: app.s1.socket.send_multipart(["ECHO", "Hello world"])
     ToggleButton:
         text: "Service 2"
         on_state: app.toggle_service2(self.state == "down")
@@ -99,11 +107,13 @@ else:
             return os.path.join(self.entrypoint_dir, pid_fn)
 
         def start(self, arg):
+            env = os.environ.copy()
+            env["PYTHON_SERVICE_ARGUMENT"] = arg
             if self.pid is not None:
                 return
             self.process = subprocess.Popen([
                 sys.executable, os.path.join(self.entrypoint_dir, self.entrypoint)
-            ], cwd=os.getcwd())
+            ], cwd=os.getcwd(), env=env)
             self.pid = self.process.pid
             with open(self.pid_filename, "w") as fd:
                 fd.write(str(self.pid))
@@ -129,10 +139,63 @@ else:
     Service = SubprocessService
 
 
+class ZmqService(Service):
+    def __init__(self, name, entrypoint, on_message, **options):
+        self._channel = None
+        self.on_message = on_message
+        super(ZmqService, self).__init__(name, entrypoint, **options)
+
+    def start(self, arg):
+        self.setup_zmq_channel()
+        super(ZmqService, self).start(str(self._channel_port))
+
+    def stop(self):
+        super(ZmqService, self).stop()
+        self._quit = True
+        self._channel = None
+
+    def setup_zmq_channel(self):
+        if self._channel is not None:
+            return
+        self._quit = False
+        self._event = Event()
+        self._channel = Thread(target=self._zmq_channel_run)
+        self._channel.daemon = True
+        self._channel.start()
+        self._event.wait()
+
+    def setup_zmq_service(self, port):
+        print "app: setup zmq service"
+        context = zmq.Context()
+        self.socket = context.socket(zmq.PAIR)
+        print "app: connecting"
+        self.socket.connect("tcp://127.0.0.1:{}".format(port))
+        print "app: connected"
+        self.on_message(["READY"])
+
+    def _zmq_channel_run(self):
+        context = zmq.Context()
+        socket = context.socket(zmq.PAIR)
+        port = socket.bind_to_random_port("tcp://127.0.0.1")
+        self._channel_port = port
+        self._event.set()
+        while not self._quit:
+            print "wait", socket.poll()
+            if not socket.poll(10):
+                continue
+            message = socket.recv_multipart()
+            if message[0] == "READY":
+                Clock.schedule_once(
+                    lambda dt: self.setup_zmq_service(message[1]), 0)
+            else:
+                self.on_message(message)
+        self._event.set()
+
+
 class TestPause(App):
     def build(self):
         self.t_server = self.t_client = None
-        self.s1 = Service("s1", "service_1.py")
+        self.s1 = ZmqService("s1", "service_1.py", self.on_s1_message)
         self.s2 = Service("s2", "service_2.py")
         self.s3 = Service("s3", "service_3.py")
         return Builder.load_string(kv)
@@ -149,7 +212,7 @@ class TestPause(App):
         print "server: create zmq context"
         context = zmq.Context()
         print "server: create socket"
-        socket = context.socket(zmq.REP)
+        socket = context.socket(zmq.PAIR)
         print "server: bind"
         socket.bind("tcp://*:12345")
         while True:
@@ -162,7 +225,7 @@ class TestPause(App):
         print "client: create zmq context"
         context = zmq.Context()
         print "client: create socket"
-        socket = context.socket(zmq.REQ)
+        socket = context.socket(zmq.PAIR)
         print "client: connect to server"
         socket.connect("tcp://localhost:12345")
         for req in range(3):
@@ -177,6 +240,9 @@ class TestPause(App):
             self.s1.start("")
         else:
             self.s1.stop()
+
+    def on_s1_message(self, message):
+        print "Service1 received message", message
 
     def toggle_service2(self, should_start):
         if should_start:
