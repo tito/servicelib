@@ -145,7 +145,7 @@ class ZmqService(Service):
         self.on_message = on_message
         super(ZmqService, self).__init__(name, entrypoint, **options)
 
-    def start(self, arg):
+    def start(self, arg=Non):
         self.setup_zmq_channel()
         super(ZmqService, self).start(str(self._channel_port))
 
@@ -252,7 +252,7 @@ class TestPause(App):
 
     def toggle_service3(self, should_start):
         if should_start:
-            self.s3.start("")
+            self.s3.start()
         else:
             self.s3.stop()
 
