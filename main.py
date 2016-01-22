@@ -5,7 +5,8 @@ from kivy.logger import Logger
 from kivy.lang import Builder
 from threading import Thread, Event
 from kivy.clock import Clock
-import zmq
+from servicelib import Service
+from servicelib.zmq_service import ZmqService
 
 kv = """
 BoxLayout:
@@ -17,10 +18,10 @@ BoxLayout:
             state: "down" if app.is_service1_running() else "normal"
         Button:
             text: "Compute"
-            on_release: app.s1.socket.send_multipart(["COMPUTE", "6684", "6513"])
+            on_release: app.s1.send("COMPUTE", "6684", "6513")
         Button:
             text: "Echo"
-            on_release: app.s1.socket.send_multipart(["ECHO", "Hello world"])
+            on_release: app.s1.send("ECHO", "Hello world")
     ToggleButton:
         text: "Service 2"
         on_state: app.toggle_service2(self.state == "down")
@@ -31,165 +32,6 @@ BoxLayout:
         state: "down" if app.is_service3_running() else "normal"
 """
 
-
-class BaseService(object):
-    def __init__(self, name, entrypoint, **options):
-        self.name = name
-        self.entrypoint = entrypoint
-        self.options = options
-        super(BaseService, self).__init__()
-
-    def start(self, arg):
-        pass
-
-    def stop(self):
-        pass
-
-
-if platform == "android":
-    from jnius import autoclass
-
-    class AndroidService(BaseService):
-        context = autoclass("org.kivy.android.PythonActivity").mActivity
-        def __init__(self, name, entrypoint, **options):
-            super(AndroidService, self).__init__(name, entrypoint, **options)
-            self.package = self.context.getApplicationContext().getPackageName()
-            self.java_class = "{}.Service{}".format(
-                self.package, name.capitalize())
-            self.service = autoclass(self.java_class)
-
-        def start(self, arg):
-            self.service.start(context, arg)
-
-        def stop(self):
-            self.service.stop(context)
-
-        def is_running(self):
-            # no idea how to check it right now.
-            return False
-
-
-    Service = AndroidService
-else:
-
-    import sys
-    import os
-    import subprocess
-    import signal
-    class SubprocessService(BaseService):
-        def __init__(self, name, entrypoint, **options):
-            super(SubprocessService, self).__init__(name, entrypoint, **options)
-            self.entrypoint_dir = os.getcwd()
-            self.process = None
-            self.pid = None
-
-            # check if a pid is already present
-            try:
-                with open(self.pid_filename) as fd:
-                    self.pid = int(fd.read())
-                try:
-                    os.kill(self.pid, 0)
-                except OSError:
-                    # process is gone
-                    print "Service {} was gone, removing pid file".format(self.name)
-                    try:
-                        os.unlink(self.pid_filename)
-                    except:
-                        pass
-                    self.pid = None
-                print "Service {} is already running (pid={})".format(self.name, self.pid)
-            except:
-                pass
-
-        @property
-        def pid_filename(self):
-            pid_fn = "{}.pid".format(self.entrypoint.rsplit(".", 1)[0])
-            return os.path.join(self.entrypoint_dir, pid_fn)
-
-        def start(self, arg):
-            env = os.environ.copy()
-            env["PYTHON_SERVICE_ARGUMENT"] = arg
-            if self.pid is not None:
-                return
-            self.process = subprocess.Popen([
-                sys.executable, os.path.join(self.entrypoint_dir, self.entrypoint)
-            ], cwd=os.getcwd(), env=env)
-            self.pid = self.process.pid
-            with open(self.pid_filename, "w") as fd:
-                fd.write(str(self.pid))
-
-        def stop(self):
-            if self.process is not None:
-                self.process.terminate()
-                self.process = None
-            else:
-                try:
-                    os.kill(self.pid, signal.SIGTERM)
-                except OSError:
-                    pass
-            self.pid = None
-            try:
-                os.unlink(self.pid_filename)
-            except:
-                pass
-
-        def is_running(self):
-            return self.pid is not None
-
-    Service = SubprocessService
-
-
-class ZmqService(Service):
-    def __init__(self, name, entrypoint, on_message, **options):
-        self._channel = None
-        self.on_message = on_message
-        super(ZmqService, self).__init__(name, entrypoint, **options)
-
-    def start(self, arg=None):
-        self.setup_zmq_channel()
-        super(ZmqService, self).start(str(self._channel_port))
-
-    def stop(self):
-        super(ZmqService, self).stop()
-        self._quit = True
-        self._channel = None
-
-    def setup_zmq_channel(self):
-        if self._channel is not None:
-            return
-        self._quit = False
-        self._event = Event()
-        self._channel = Thread(target=self._zmq_channel_run)
-        self._channel.daemon = True
-        self._channel.start()
-        self._event.wait()
-
-    def setup_zmq_service(self, port):
-        print "app: setup zmq service"
-        context = zmq.Context()
-        self.socket = context.socket(zmq.PAIR)
-        print "app: connecting"
-        self.socket.connect("tcp://127.0.0.1:{}".format(port))
-        print "app: connected"
-        self.on_message(["READY"])
-
-    def _zmq_channel_run(self):
-        context = zmq.Context()
-        socket = context.socket(zmq.PAIR)
-        port = socket.bind_to_random_port("tcp://127.0.0.1")
-        self._channel_port = port
-        self._event.set()
-        while not self._quit:
-            print "wait", socket.poll()
-            if not socket.poll(10):
-                continue
-            message = socket.recv_multipart()
-            if message[0] == "READY":
-                Clock.schedule_once(
-                    lambda dt: self.setup_zmq_service(message[1]), 0)
-            else:
-                self.on_message(message)
-        self._event.set()
 
 
 class TestPause(App):
@@ -209,12 +51,12 @@ class TestPause(App):
         else:
             self.s1.stop()
 
-    def on_s1_message(self, message):
+    def on_s1_message(self, *message):
         print "Service1 received message", message
 
     def toggle_service2(self, should_start):
         if should_start:
-            self.s2.start("")
+            self.s2.start()
         else:
             self.s2.stop()
 
