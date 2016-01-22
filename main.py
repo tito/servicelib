@@ -145,7 +145,7 @@ class ZmqService(Service):
         self.on_message = on_message
         super(ZmqService, self).__init__(name, entrypoint, **options)
 
-    def start(self, arg=Non):
+    def start(self, arg=None):
         self.setup_zmq_channel()
         super(ZmqService, self).start(str(self._channel_port))
 
