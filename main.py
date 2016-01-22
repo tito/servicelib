@@ -201,39 +201,7 @@ class TestPause(App):
         return Builder.load_string(kv)
 
     def on_pause(self):
-        Logger.info("App: GO PAUSE")
         return True
-
-    def on_resume(self):
-        Logger.info("App: GO RESUME")
-        return True
-
-    def run_server(self):
-        print "server: create zmq context"
-        context = zmq.Context()
-        print "server: create socket"
-        socket = context.socket(zmq.PAIR)
-        print "server: bind"
-        socket.bind("tcp://*:12345")
-        while True:
-            print "server: wait message"
-            message = socket.recv()
-            print "server: received", message
-            socket.send("START" + message + "END")
-
-    def run_client(self):
-        print "client: create zmq context"
-        context = zmq.Context()
-        print "client: create socket"
-        socket = context.socket(zmq.PAIR)
-        print "client: connect to server"
-        socket.connect("tcp://localhost:12345")
-        for req in range(3):
-            print "client: send message", req
-            socket.send("hello{}".format(req))
-            print "client: get message"
-            message = socket.recv()
-            print "client: received", message
 
     def toggle_service1(self, should_start):
         if should_start:

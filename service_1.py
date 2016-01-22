@@ -52,11 +52,14 @@ def run():
         print "1: wait for a message"
         message = sin.recv_multipart()
         print "1: received", message
+
         if message[0] == "QUIT":
             print "1: soft-leaving"
             break
+
         elif message[0] == "ECHO":
             sapp.send_multipart(message)
+
         elif message[0] == "COMPUTE":
             arg1, arg2 = message[1:]
             import time
@@ -65,7 +68,6 @@ def run():
             res = str(int(arg1) ** int(arg2))
             print "1", len(res)
             sapp.send_multipart(("RESULT", res))
-
 
 
 run()
