@@ -2,7 +2,7 @@
 """
 Local service using ZMQ
 =======================
-*
+
 """
 
 import zmq
@@ -12,7 +12,7 @@ from servicelib import Service
 
 
 class ZmqService(Service):
-    def __init__(self, name, entrypoint, on_message, **options):
+    def __init__(self, name, entrypoint, on_message=None, **options):
         self._channel = None
         self.on_message = on_message
         super(ZmqService, self).__init__(name, entrypoint, **options)
@@ -37,12 +37,9 @@ class ZmqService(Service):
         self._event.wait()
 
     def setup_zmq_service(self, port):
-        print("app: setup zmq service")
         context = zmq.Context()
         self.socket = context.socket(zmq.PAIR)
-        print("app: connecting")
         self.socket.connect("tcp://127.0.0.1:{}".format(port))
-        print("app: connected")
         self.on_message("READY")
 
     def _zmq_channel_run(self):
@@ -68,8 +65,10 @@ class ZmqService(Service):
         handle = "on_{}".format(command)
         if hasattr(self, handle):
             getattr(self, handle)(*args)
-        else:
+        elif self.on_message:
             self.on_message(command, *args)
+        else:
+            print("ZmqService: no handler for {}".format(command))
 
     def ping(self, on_pong):
         if not self.socket:
@@ -80,7 +79,6 @@ class ZmqService(Service):
 
 
 class ZmqServiceImpl(object):
-    """"""
     socket_in = None
     socket_out = None
     quit = False
