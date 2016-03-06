@@ -37,18 +37,23 @@ class SubprocessService(BaseService):
     @property
     def pid_filename(self):
         pid_fn = "{}.pid".format(self.entrypoint.rsplit(".", 1)[0])
-        return os.path.join(self.entrypoint_dir, pid_fn)
+        if getattr(sys, "frozen", False):
+            return os.path.join(os.getcwd(), os.path.basename(pid_fn))
+        else:
+            return os.path.join(self.entrypoint_dir, pid_fn)
 
     def start(self, arg=""):
         env = os.environ.copy()
         env["PYTHON_SERVICE_ARGUMENT"] = arg
         if self.pid is not None:
             return
-        self.process = subprocess.Popen(
-            [
-                sys.executable,
-                os.path.join(self.entrypoint_dir, self.entrypoint)
-            ],
+        args = [sys.executable]
+        if getattr(sys, "frozen", False):
+            args.append("--service")
+            args.append(self.module)
+        else:
+            args.append(os.path.join(self.entrypoint_dir, self.entrypoint))
+        self.process = subprocess.Popen(args,
             cwd=os.getcwd(),
             env=env)
         self.pid = self.process.pid
@@ -62,7 +67,7 @@ class SubprocessService(BaseService):
         else:
             try:
                 os.kill(self.pid, signal.SIGTERM)
-            except OSError:
+            except:
                 pass
         self.pid = None
         try:

@@ -13,3 +13,14 @@ class BaseService(object):
 
     def stop(self):
         pass
+
+    @property
+    def module(self):
+        mod = self.entrypoint.replace("/", ".")
+        if mod.endswith(".py"):
+            mod = mod[:-3]
+        elif mod.endswith(".pyo"):
+            mod = mod[:-4]
+        elif mod.endswith(".pyc"):
+            mod = mod[:-4]
+        return mod
